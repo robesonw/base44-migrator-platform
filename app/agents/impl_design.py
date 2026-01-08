@@ -863,10 +863,15 @@ class DomainModelerAgent(BaseAgent):
             if not has_id:
                 lines.append("    id TEXT PRIMARY KEY,")
             
+            # Check for system timestamp fields
+            created_at_field = next((f for f in fields if f.get("name") in ("created_at", "createdAt")), None)
+            updated_at_field = next((f for f in fields if f.get("name") in ("updated_at", "updatedAt")), None)
+            
             # Generate columns
             column_lines = []
             for field in fields:
-                field_name = to_snake_case(field["name"])
+                field_name_raw = field["name"]
+                field_name = to_snake_case(field_name_raw)
                 field_type = field.get("type", "string").lower()
                 required = field.get("required", False)
                 nullable = field.get("nullable", False)
@@ -877,6 +882,10 @@ class DomainModelerAgent(BaseAgent):
                     column_lines.append(f"    {field_name} TEXT PRIMARY KEY")
                     continue
                 
+                # Skip system timestamp fields - handle separately
+                if field_name_raw in ("created_at", "createdAt", "updated_at", "updatedAt"):
+                    continue
+                
                 # Map to PostgreSQL type
                 pg_type = self._map_postgres_type(field_type, raw)
                 
@@ -885,21 +894,40 @@ class DomainModelerAgent(BaseAgent):
                 if not nullable and required:
                     col_def += " NOT NULL"
                 
-                # Add CHECK constraint for enums (as separate constraint)
-                # Note: We'll add enum constraints after table creation if needed
-                # For now, just add a comment
+                # Add CHECK constraint for enums
                 if "enum" in raw:
                     enum_values = ", ".join(f"'{v}'" for v in raw["enum"])
-                    # Add as column constraint inline (simpler approach)
                     col_def = col_def.rstrip()
                     col_def += f" CHECK ({field_name} IN ({enum_values}))"
                 
                 column_lines.append(col_def)
             
-            # Add standard columns (skip if already exist)
-            if not any(f.get("name") in ("created_at", "createdAt") for f in fields):
+            # Handle created_at
+            if created_at_field:
+                # Field exists - check if user-supplied (default to system-managed)
+                field_name = to_snake_case(created_at_field["name"])
+                raw = created_at_field.get("raw", {})
+                # Check if description indicates user-supplied
+                description = raw.get("description", "").lower()
+                is_user_supplied = any(word in description for word in ["user", "supplied", "provided", "input"])
+                default_clause = "" if is_user_supplied else " DEFAULT now()"
+                required = created_at_field.get("required", False)
+                nullable = created_at_field.get("nullable", False)
+                not_null = " NOT NULL" if not nullable and required else ""
+                column_lines.append(f"    {field_name} TIMESTAMPTZ{not_null}{default_clause}")
+            else:
+                # Add system-managed created_at
                 column_lines.append("    created_at TIMESTAMPTZ NOT NULL DEFAULT now()")
-            if not any(f.get("name") in ("updated_at", "updatedAt") for f in fields):
+            
+            # Handle updated_at (always system-managed with DEFAULT now())
+            if updated_at_field:
+                field_name = to_snake_case(updated_at_field["name"])
+                required = updated_at_field.get("required", False)
+                nullable = updated_at_field.get("nullable", False)
+                not_null = " NOT NULL" if not nullable and required else ""
+                column_lines.append(f"    {field_name} TIMESTAMPTZ{not_null} DEFAULT now()")
+            else:
+                # Add system-managed updated_at
                 column_lines.append("    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()")
             
             lines.append(",\n".join(column_lines))
@@ -948,6 +976,10 @@ class DomainModelerAgent(BaseAgent):
             lines.append(f'    __tablename__ = "{table_name}"')
             lines.append("")
             
+            # Check for system timestamp fields
+            created_at_field = next((f for f in fields if f.get("name") in ("created_at", "createdAt")), None)
+            updated_at_field = next((f for f in fields if f.get("name") in ("updated_at", "updatedAt")), None)
+            
             # Generate columns
             has_id = False
             for field in fields:
@@ -961,6 +993,10 @@ class DomainModelerAgent(BaseAgent):
                 if field_name == "id":
                     has_id = True
                     lines.append(f'    {snake_name} = Column(String, primary_key=True)')
+                    continue
+                
+                # Skip system timestamp fields - handle separately
+                if field_name in ("created_at", "createdAt", "updated_at", "updatedAt"):
                     continue
                 
                 # Map to SQLAlchemy type
@@ -979,10 +1015,28 @@ class DomainModelerAgent(BaseAgent):
             if not has_id:
                 lines.append("    id = Column(String, primary_key=True)")
             
-            # Add standard columns
-            if not any(f.get("name") in ("created_at", "createdAt") for f in fields):
+            # Handle created_at
+            if created_at_field:
+                field_name = to_snake_case(created_at_field["name"])
+                raw = created_at_field.get("raw", {})
+                description = raw.get("description", "").lower()
+                is_user_supplied = any(word in description for word in ["user", "supplied", "provided", "input"])
+                server_default = "" if is_user_supplied else ", server_default='now()'"
+                required = created_at_field.get("required", False)
+                nullable = created_at_field.get("nullable", False)
+                nullable_str = ", nullable=False" if not nullable and required else ""
+                lines.append(f"    {field_name} = Column(TIMESTAMPTZ{nullable_str}{server_default})")
+            else:
                 lines.append("    created_at = Column(TIMESTAMPTZ, nullable=False, server_default='now()')")
-            if not any(f.get("name") in ("updated_at", "updatedAt") for f in fields):
+            
+            # Handle updated_at (always system-managed)
+            if updated_at_field:
+                field_name = to_snake_case(updated_at_field["name"])
+                required = updated_at_field.get("required", False)
+                nullable = updated_at_field.get("nullable", False)
+                nullable_str = ", nullable=False" if not nullable and required else ""
+                lines.append(f"    {field_name} = Column(TIMESTAMPTZ{nullable_str}, server_default='now()')")
+            else:
                 lines.append("    updated_at = Column(TIMESTAMPTZ, nullable=False, server_default='now()')")
             
             lines.append("")
@@ -1068,10 +1122,32 @@ class DomainModelerAgent(BaseAgent):
             if not has_id:
                 column_defs.insert(0, '        sa.Column("id", sa.String(), primary_key=True),')
             
-            # Add standard columns
-            if not any(f.get("name") in ("created_at", "createdAt") for f in fields):
+            # Handle system timestamp fields
+            created_at_field = next((f for f in fields if f.get("name") in ("created_at", "createdAt")), None)
+            updated_at_field = next((f for f in fields if f.get("name") in ("updated_at", "updatedAt")), None)
+            
+            # Handle created_at
+            if created_at_field:
+                field_name = to_snake_case(created_at_field["name"])
+                raw = created_at_field.get("raw", {})
+                description = raw.get("description", "").lower()
+                is_user_supplied = any(word in description for word in ["user", "supplied", "provided", "input"])
+                server_default = "" if is_user_supplied else ', server_default=sa.text("now()")'
+                required = created_at_field.get("required", False)
+                nullable = created_at_field.get("nullable", False)
+                nullable_str = ", nullable=False" if not nullable and required else ""
+                column_defs.append(f'        sa.Column("{field_name}", TIMESTAMPTZ(){nullable_str}{server_default}),')
+            else:
                 column_defs.append('        sa.Column("created_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),')
-            if not any(f.get("name") in ("updated_at", "updatedAt") for f in fields):
+            
+            # Handle updated_at (always system-managed)
+            if updated_at_field:
+                field_name = to_snake_case(updated_at_field["name"])
+                required = updated_at_field.get("required", False)
+                nullable = updated_at_field.get("nullable", False)
+                nullable_str = ", nullable=False" if not nullable and required else ""
+                column_defs.append(f'        sa.Column("{field_name}", TIMESTAMPTZ(){nullable_str}, server_default=sa.text("now()")),')
+            else:
                 column_defs.append('        sa.Column("updated_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),')
             
             lines.extend(column_defs)
@@ -1188,15 +1264,23 @@ class DomainModelerAgent(BaseAgent):
                 "required": []
             }
             
+            # Check if entity has id field
+            has_id_field = any(f.get("name") == "id" for f in fields)
+            
             # Add _id field (prefer string for Base44 IDs)
             schema["properties"]["_id"] = {
                 "type": "string",
                 "description": "Document ID"
             }
             
-            # Add entity fields
+            # Add entity fields (skip id field if it exists, since we use _id)
             for field in fields:
                 field_name = field["name"]
+                
+                # Skip id field - _id is used instead
+                if field_name == "id":
+                    continue
+                
                 raw = field.get("raw", {})
                 
                 # Convert field to JSON schema property
