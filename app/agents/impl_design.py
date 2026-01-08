@@ -496,15 +496,874 @@ def scan_api_client_files(source_dir: Path, api_client_files: List[str]) -> List
 
 class DomainModelerAgent(BaseAgent):
     stage = JobStage.DESIGN_DB_SCHEMA
+    
+    # Constants for AUTO classification
+    MAX_POSTGRES_FIELDS = 25
+    
     def run(self, job, ws):
-        schema_path = ws.artifacts_dir / "db-schema.md"
-        schema_path.write_text(
-            "# DB Schema (placeholder)\n\n"
-            "- TODO: Infer entities from ui-contract.json\n"
-            "- TODO: Generate migrations in the migrated app repo\n",
+        try:
+            contract_path = ws.artifacts_dir / "ui-contract.json"
+            
+            if not contract_path.exists():
+                return AgentResult(
+                    self.stage,
+                    False,
+                    "ui-contract.json not found in workspace artifacts",
+                    {}
+                )
+            
+            # Load contract
+            with open(contract_path, "r", encoding="utf-8") as f:
+                contract = json.load(f)
+            
+            entities = contract.get("entities", [])
+            if not entities:
+                return AgentResult(
+                    self.stage,
+                    False,
+                    "No entities found in ui-contract.json",
+                    {}
+                )
+            
+            # Get db_stack and preferences
+            db_stack = job.db_stack
+            # Get db_preferences from artifacts (optional field stored in JSON)
+            artifacts = getattr(job, 'artifacts', {})
+            db_preferences = artifacts.get('db_preferences', {}) if isinstance(artifacts, dict) else {}
+            
+            # Determine strategy
+            hybrid_strategy = db_preferences.get("hybridStrategy", "auto" if db_stack == "hybrid" else None)
+            
+            # Classify entities
+            storage_plan = self._classify_entities(entities, db_stack, db_preferences, hybrid_strategy)
+            
+            # Write storage-plan.json
+            storage_plan_path = ws.artifacts_dir / "storage-plan.json"
+            storage_plan_path.write_text(
+                json.dumps(storage_plan, indent=2),
             encoding="utf-8"
         )
-        return AgentResult(self.stage, True, "Wrote placeholder db-schema.md", {"db_schema": str(schema_path.relative_to(ws.root))})
+            
+            # Generate artifacts
+            artifacts_index = {
+                "storage_plan": str(storage_plan_path.relative_to(ws.root))
+            }
+            
+            # Always write db-schema.md
+            db_schema_md_path = ws.artifacts_dir / "db-schema.md"
+            db_schema_md = self._generate_db_schema_md(storage_plan, entities)
+            db_schema_md_path.write_text(db_schema_md, encoding="utf-8")
+            artifacts_index["db_schema"] = str(db_schema_md_path.relative_to(ws.root))
+            
+            # Count entities by store
+            postgres_entities = [e for e in storage_plan["entities"] if e["store"] == "postgres"]
+            mongo_entities = [e for e in storage_plan["entities"] if e["store"] == "mongo"]
+            
+            # Generate Postgres artifacts if needed
+            if db_stack in ("postgres", "hybrid") and postgres_entities:
+                pg_artifacts = self._generate_postgres_artifacts(
+                    ws, storage_plan, entities, postgres_entities
+                )
+                artifacts_index.update(pg_artifacts)
+            
+            # Generate Mongo artifacts if needed
+            if db_stack in ("mongo", "hybrid") and mongo_entities:
+                mongo_artifacts = self._generate_mongo_artifacts(
+                    ws, storage_plan, entities, mongo_entities
+                )
+                artifacts_index.update(mongo_artifacts)
+            
+            # Log counts
+            log.info(
+                f"DomainModelerAgent: {len(entities)} total entities, "
+                f"{len(postgres_entities)} postgres, {len(mongo_entities)} mongo, "
+                f"{len(artifacts_index)} artifacts written",
+                extra={"job_id": getattr(job, 'id', 'unknown'), "stage": str(self.stage)}
+            )
+            
+            return AgentResult(
+                self.stage,
+                True,
+                f"Generated storage plan and artifacts for {len(entities)} entities",
+                artifacts_index
+            )
+        
+        except Exception as e:
+            log.error(f"DomainModelerAgent failed: {e}", exc_info=True)
+            return AgentResult(
+                self.stage,
+                False,
+                f"DomainModelerAgent failed: {str(e)}",
+                {}
+            )
+    
+    def _classify_entities(
+        self,
+        entities: List[Dict[str, Any]],
+        db_stack: str,
+        db_preferences: Dict[str, Any],
+        hybrid_strategy: Optional[str]
+    ) -> Dict[str, Any]:
+        """Classify entities into postgres/mongo stores."""
+        mode = db_stack
+        
+        # Get explicit overrides
+        mongo_overrides = set(db_preferences.get("mongoEntities", []))
+        postgres_overrides = set(db_preferences.get("postgresEntities", []))
+        
+        classified = []
+        
+        for entity in entities:
+            entity_name = entity["name"]
+            
+            # Check explicit overrides first
+            if entity_name in mongo_overrides:
+                classified.append({
+                    "name": entity_name,
+                    "store": "mongo",
+                    "reason": "explicit override in db_preferences.mongoEntities"
+                })
+                continue
+            
+            if entity_name in postgres_overrides:
+                classified.append({
+                    "name": entity_name,
+                    "store": "postgres",
+                    "reason": "explicit override in db_preferences.postgresEntities"
+                })
+                continue
+            
+            # AUTO classification (only if hybrid and strategy is auto)
+            if db_stack == "hybrid":
+                if hybrid_strategy == "auto":
+                    store, reason = self._classify_entity_auto(entity)
+                    classified.append({
+                        "name": entity_name,
+                        "store": store,
+                        "reason": reason
+                    })
+                else:
+                    # Explicit strategy but no override - use AUTO as fallback
+                    store, reason = self._classify_entity_auto(entity)
+                    classified.append({
+                        "name": entity_name,
+                        "store": store,
+                        "reason": reason
+                    })
+            elif db_stack == "postgres":
+                classified.append({
+                    "name": entity_name,
+                    "store": "postgres",
+                    "reason": "db_stack is postgres"
+                })
+            elif db_stack == "mongo":
+                classified.append({
+                    "name": entity_name,
+                    "store": "mongo",
+                    "reason": "db_stack is mongo"
+                })
+            else:
+                # Fallback (shouldn't happen)
+                classified.append({
+                    "name": entity_name,
+                    "store": "postgres",
+                    "reason": "default fallback"
+                })
+        
+        return {
+            "mode": mode,
+            "entities": classified
+        }
+    
+    def _classify_entity_auto(self, entity: Dict[str, Any]) -> tuple[str, str]:
+        """Classify entity using AUTO strategy rules."""
+        fields = entity.get("fields", [])
+        entity_name = entity["name"]
+        
+        # Rule 1: Check for complex objects/arrays
+        for field in fields:
+            field_type = field.get("type", "").lower()
+            raw = field.get("raw", {})
+            
+            if field_type in ("object", "array"):
+                # Check if complex
+                if field_type == "object":
+                    if "properties" in raw and raw["properties"]:
+                        # Has nested properties - complex
+                        return "mongo", f"field '{field['name']}' is complex object with nested properties"
+                    if "additionalProperties" in raw and raw.get("additionalProperties") is True:
+                        # Open schema - complex
+                        return "mongo", f"field '{field['name']}' is object with additionalProperties"
+                elif field_type == "array":
+                    items = raw.get("items", {})
+                    if isinstance(items, dict) and items.get("type") == "object":
+                        # Array of objects - complex
+                        return "mongo", f"field '{field['name']}' is array of objects"
+                    if isinstance(items, dict) and "properties" in items:
+                        # Array of complex objects
+                        return "mongo", f"field '{field['name']}' is array of objects with nested properties"
+        
+        # Rule 3: Check field count and nesting depth
+        if len(fields) > self.MAX_POSTGRES_FIELDS:
+            return "mongo", f"entity has {len(fields)} fields (exceeds {self.MAX_POSTGRES_FIELDS})"
+        
+        # Check for deep nesting
+        max_depth = self._calculate_max_nesting_depth(fields)
+        if max_depth > 3:
+            return "mongo", f"entity has deeply nested structures (depth {max_depth})"
+        
+        # Rule 4: Check for relational patterns (optional heuristic)
+        if self._is_relational_pattern(entity_name, fields):
+            return "postgres", f"entity matches relational pattern and has only primitive fields"
+        
+        # Rule 2: Default to postgres
+        return "postgres", "entity has only primitive fields or simple structures"
+    
+    def _calculate_max_nesting_depth(self, fields: List[Dict[str, Any]]) -> int:
+        """Calculate maximum nesting depth in entity fields."""
+        max_depth = 0
+        
+        def depth_of_schema(schema: Any, current_depth: int = 0) -> int:
+            if not isinstance(schema, dict):
+                return current_depth
+            
+            if schema.get("type") == "object":
+                props = schema.get("properties", {})
+                if props:
+                    return max(
+                        depth_of_schema(v, current_depth + 1) for v in props.values()
+                    ) if props else current_depth + 1
+            elif schema.get("type") == "array":
+                items = schema.get("items", {})
+                return depth_of_schema(items, current_depth + 1)
+            
+            return current_depth
+        
+        for field in fields:
+            raw = field.get("raw", {})
+            depth = depth_of_schema(raw, 0)
+            max_depth = max(max_depth, depth)
+        
+        return max_depth
+    
+    def _is_relational_pattern(self, entity_name: str, fields: List[Dict[str, Any]]) -> bool:
+        """Check if entity matches relational naming patterns."""
+        patterns = ["Link", "Join", "Map", "Follow", "Interaction"]
+        if any(entity_name.endswith(pattern) for pattern in patterns):
+            # Check if all fields are primitives
+            primitive_types = {"string", "number", "integer", "boolean", "datetime", "date"}
+            for field in fields:
+                field_type = field.get("type", "").lower()
+                if field_type not in primitive_types:
+                    return False
+            return True
+        return False
+    
+    def _generate_db_schema_md(
+        self,
+        storage_plan: Dict[str, Any],
+        entities: List[Dict[str, Any]]
+    ) -> str:
+        """Generate human-readable db-schema.md."""
+        lines = ["# Database Schema"]
+        lines.append("")
+        lines.append(f"**Storage Mode:** {storage_plan['mode']}")
+        lines.append("")
+        lines.append("## Entity Classification")
+        lines.append("")
+        
+        entity_map = {e["name"]: e for e in entities}
+        
+        for classified in storage_plan["entities"]:
+            entity_name = classified["name"]
+            store = classified["store"]
+            reason = classified["reason"]
+            entity = entity_map.get(entity_name, {})
+            fields = entity.get("fields", [])
+            
+            lines.append(f"### {entity_name}")
+            lines.append(f"- **Store:** {store}")
+            lines.append(f"- **Reason:** {reason}")
+            lines.append(f"- **Fields:** {len(fields)}")
+            lines.append("")
+        
+        lines.append("## Field Details")
+        lines.append("")
+        
+        for entity in entities:
+            entity_name = entity["name"]
+            fields = entity.get("fields", [])
+            classified = next(
+                (e for e in storage_plan["entities"] if e["name"] == entity_name),
+                None
+            )
+            store = classified["store"] if classified else "unknown"
+            
+            lines.append(f"### {entity_name} ({store})")
+            lines.append("")
+            for field in fields:
+                field_type = field.get("type", "unknown")
+                required = field.get("required", False)
+                nullable = field.get("nullable", False)
+                req_str = "required" if required else "optional"
+                null_str = "nullable" if nullable else "not nullable"
+                lines.append(f"- `{field['name']}`: {field_type} ({req_str}, {null_str})")
+            lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _generate_postgres_artifacts(
+        self,
+        ws,
+        storage_plan: Dict[str, Any],
+        entities: List[Dict[str, Any]],
+        postgres_entities: List[Dict[str, Any]]
+    ) -> Dict[str, str]:
+        """Generate Postgres artifacts."""
+        artifacts = {}
+        entity_map = {e["name"]: e for e in entities}
+        pg_entity_names = {e["name"] for e in postgres_entities}
+        pg_entities = [entity_map[name] for name in pg_entity_names if name in entity_map]
+        
+        # Generate db-schema.sql
+        sql_path = ws.artifacts_dir / "db-schema.sql"
+        sql_content = self._generate_postgres_sql(pg_entities)
+        sql_path.write_text(sql_content, encoding="utf-8")
+        artifacts["db_schema_sql"] = str(sql_path.relative_to(ws.root))
+        
+        # Generate models_postgres.py
+        models_path = ws.artifacts_dir / "models_postgres.py"
+        models_content = self._generate_postgres_models(pg_entities)
+        models_path.write_text(models_content, encoding="utf-8")
+        artifacts["models_postgres"] = str(models_path.relative_to(ws.root))
+        
+        # Generate Alembic migration
+        migrations_dir = ws.artifacts_dir / "migrations"
+        migrations_dir.mkdir(exist_ok=True)
+        migration_path = migrations_dir / "0001_initial_schema.py"
+        migration_content = self._generate_alembic_migration(pg_entities)
+        migration_path.write_text(migration_content, encoding="utf-8")
+        artifacts["alembic_migration"] = str(migration_path.relative_to(ws.root))
+        
+        return artifacts
+    
+    def _generate_postgres_sql(self, entities: List[Dict[str, Any]]) -> str:
+        """Generate PostgreSQL CREATE TABLE statements."""
+        lines = []
+        
+        for entity in entities:
+            entity_name = entity["name"]
+            table_name = to_snake_case(entity_name)
+            fields = entity.get("fields", [])
+            
+            lines.append(f"CREATE TABLE {table_name} (")
+            
+            # Check for id field
+            has_id = any(f.get("name") == "id" for f in fields)
+            if not has_id:
+                lines.append("    id TEXT PRIMARY KEY,")
+            
+            # Generate columns
+            column_lines = []
+            for field in fields:
+                field_name = to_snake_case(field["name"])
+                field_type = field.get("type", "string").lower()
+                required = field.get("required", False)
+                nullable = field.get("nullable", False)
+                raw = field.get("raw", {})
+                
+                # Handle id field specially
+                if field_name == "id":
+                    column_lines.append(f"    {field_name} TEXT PRIMARY KEY")
+                    continue
+                
+                # Map to PostgreSQL type
+                pg_type = self._map_postgres_type(field_type, raw)
+                
+                # Build column definition
+                col_def = f"    {field_name} {pg_type}"
+                if not nullable and required:
+                    col_def += " NOT NULL"
+                
+                # Add CHECK constraint for enums (as separate constraint)
+                # Note: We'll add enum constraints after table creation if needed
+                # For now, just add a comment
+                if "enum" in raw:
+                    enum_values = ", ".join(f"'{v}'" for v in raw["enum"])
+                    # Add as column constraint inline (simpler approach)
+                    col_def = col_def.rstrip()
+                    col_def += f" CHECK ({field_name} IN ({enum_values}))"
+                
+                column_lines.append(col_def)
+            
+            # Add standard columns (skip if already exist)
+            if not any(f.get("name") in ("created_at", "createdAt") for f in fields):
+                column_lines.append("    created_at TIMESTAMPTZ NOT NULL DEFAULT now()")
+            if not any(f.get("name") in ("updated_at", "updatedAt") for f in fields):
+                column_lines.append("    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()")
+            
+            lines.append(",\n".join(column_lines))
+            lines.append(");")
+            lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _map_postgres_type(self, field_type: str, raw: Dict[str, Any]) -> str:
+        """Map field type to PostgreSQL type."""
+        type_map = {
+            "string": "TEXT",
+            "number": "DOUBLE PRECISION",
+            "integer": "BIGINT",
+            "int": "BIGINT",
+            "boolean": "BOOLEAN",
+            "bool": "BOOLEAN",
+            "datetime": "TIMESTAMPTZ",
+            "date": "DATE",
+        }
+        
+        # Check for array/object - use JSONB
+        if field_type in ("array", "object"):
+            return "JSONB"
+        
+        return type_map.get(field_type.lower(), "TEXT")
+    
+    def _generate_postgres_models(self, entities: List[Dict[str, Any]]) -> str:
+        """Generate SQLAlchemy models for Postgres entities."""
+        lines = [
+            "from sqlalchemy import Column, String, BigInteger, Boolean, Double, DateTime, Text, CheckConstraint, JSON",
+            "from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMPTZ",
+            "from sqlalchemy.ext.declarative import declarative_base",
+            "from datetime import datetime",
+            "",
+            "Base = declarative_base()",
+            "",
+        ]
+        
+        for entity in entities:
+            entity_name = entity["name"]
+            table_name = to_snake_case(entity_name)
+            fields = entity.get("fields", [])
+            
+            lines.append(f"class {entity_name}(Base):")
+            lines.append(f'    __tablename__ = "{table_name}"')
+            lines.append("")
+            
+            # Generate columns
+            has_id = False
+            for field in fields:
+                field_name = field["name"]
+                snake_name = to_snake_case(field_name)
+                field_type = field.get("type", "string").lower()
+                required = field.get("required", False)
+                nullable = field.get("nullable", False)
+                raw = field.get("raw", {})
+                
+                if field_name == "id":
+                    has_id = True
+                    lines.append(f'    {snake_name} = Column(String, primary_key=True)')
+                    continue
+                
+                # Map to SQLAlchemy type
+                sa_type = self._map_sqlalchemy_type(field_type, raw)
+                
+                # Build column definition
+                col_parts = [f"Column({sa_type}"]
+                if not nullable and required:
+                    col_parts.append("nullable=False")
+                col_parts.append(")")
+                col_def = ", ".join(col_parts)
+                
+                lines.append(f"    {snake_name} = {col_def}")
+            
+            # Add id if missing
+            if not has_id:
+                lines.append("    id = Column(String, primary_key=True)")
+            
+            # Add standard columns
+            if not any(f.get("name") in ("created_at", "createdAt") for f in fields):
+                lines.append("    created_at = Column(TIMESTAMPTZ, nullable=False, server_default='now()')")
+            if not any(f.get("name") in ("updated_at", "updatedAt") for f in fields):
+                lines.append("    updated_at = Column(TIMESTAMPTZ, nullable=False, server_default='now()')")
+            
+            lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _map_sqlalchemy_type(self, field_type: str, raw: Dict[str, Any]) -> str:
+        """Map field type to SQLAlchemy type."""
+        type_map = {
+            "string": "String",
+            "number": "Double",
+            "integer": "BigInteger",
+            "int": "BigInteger",
+            "boolean": "Boolean",
+            "bool": "Boolean",
+            "datetime": "TIMESTAMPTZ",
+            "date": "DateTime",
+        }
+        
+        if field_type in ("array", "object"):
+            return "JSON"
+        
+        return type_map.get(field_type.lower(), "String")
+    
+    def _generate_alembic_migration(self, entities: List[Dict[str, Any]]) -> str:
+        """Generate Alembic migration file."""
+        from datetime import datetime
+        
+        create_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        lines = [
+            '"""initial_schema',
+            "",
+            "Revision ID: 0001",
+            "Revises:",
+            f"Create Date: {create_date}",
+            '"""',
+            "",
+            "from alembic import op",
+            "import sqlalchemy as sa",
+            "from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMPTZ",
+            "",
+            "revision = '0001'",
+            "down_revision = None",
+            "branch_labels = None",
+            "depends_on = None",
+            "",
+            "def upgrade():",
+        ]
+        
+        for entity in entities:
+            entity_name = entity["name"]
+            table_name = to_snake_case(entity_name)
+            fields = entity.get("fields", [])
+            
+            lines.append(f"    op.create_table(")
+            lines.append(f'        "{table_name}",')
+            
+            # Generate columns
+            has_id = False
+            column_defs = []
+            
+            for field in fields:
+                field_name = field["name"]
+                snake_name = to_snake_case(field_name)
+                field_type = field.get("type", "string").lower()
+                required = field.get("required", False)
+                nullable = field.get("nullable", False)
+                raw = field.get("raw", {})
+                
+                if field_name == "id":
+                    has_id = True
+                    column_defs.append(f'        sa.Column("{snake_name}", sa.String(), primary_key=True),')
+                    continue
+                
+                # Map to Alembic type
+                alembic_type = self._map_alembic_type(field_type, raw)
+                
+                col_parts = [f'sa.Column("{snake_name}", {alembic_type})']
+                if not nullable and required:
+                    col_parts[-1] = col_parts[-1].rstrip(')') + ", nullable=False)"
+                column_defs.append("        " + col_parts[0])
+            
+            if not has_id:
+                column_defs.insert(0, '        sa.Column("id", sa.String(), primary_key=True),')
+            
+            # Add standard columns
+            if not any(f.get("name") in ("created_at", "createdAt") for f in fields):
+                column_defs.append('        sa.Column("created_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),')
+            if not any(f.get("name") in ("updated_at", "updatedAt") for f in fields):
+                column_defs.append('        sa.Column("updated_at", TIMESTAMPTZ(), nullable=False, server_default=sa.text("now()")),')
+            
+            lines.extend(column_defs)
+            lines.append("    )")
+            lines.append("")
+        
+        lines.extend([
+            "def downgrade():",
+        ])
+        
+        for entity in reversed(entities):  # Reverse for downgrade
+            table_name = to_snake_case(entity["name"])
+            lines.append(f'    op.drop_table("{table_name}")')
+        
+        return "\n".join(lines)
+    
+    def _map_alembic_type(self, field_type: str, raw: Dict[str, Any]) -> str:
+        """Map field type to Alembic/sqlalchemy type."""
+        type_map = {
+            "string": "sa.String()",
+            "number": "sa.Double()",
+            "integer": "sa.BigInteger()",
+            "int": "sa.BigInteger()",
+            "boolean": "sa.Boolean()",
+            "bool": "sa.Boolean()",
+            "datetime": "TIMESTAMPTZ()",
+            "date": "sa.Date()",
+        }
+        
+        if field_type in ("array", "object"):
+            return "JSONB()"
+        
+        return type_map.get(field_type.lower(), "sa.String()")
+    
+    def _generate_mongo_artifacts(
+        self,
+        ws,
+        storage_plan: Dict[str, Any],
+        entities: List[Dict[str, Any]],
+        mongo_entities: List[Dict[str, Any]]
+    ) -> Dict[str, str]:
+        """Generate Mongo artifacts."""
+        artifacts = {}
+        entity_map = {e["name"]: e for e in entities}
+        mongo_entity_names = {e["name"] for e in mongo_entities}
+        mongo_entities_list = [entity_map[name] for name in mongo_entity_names if name in entity_map]
+        
+        # Generate mongo-collections.md
+        collections_path = ws.artifacts_dir / "mongo-collections.md"
+        collections_content = self._generate_mongo_collections_md(mongo_entities_list)
+        collections_path.write_text(collections_content, encoding="utf-8")
+        artifacts["mongo_collections"] = str(collections_path.relative_to(ws.root))
+        
+        # Generate mongo-schemas.json
+        schemas_path = ws.artifacts_dir / "mongo-schemas.json"
+        schemas_content = self._generate_mongo_schemas_json(mongo_entities_list)
+        schemas_path.write_text(json.dumps(schemas_content, indent=2), encoding="utf-8")
+        artifacts["mongo_schemas"] = str(schemas_path.relative_to(ws.root))
+        
+        # Generate models_mongo.py
+        models_path = ws.artifacts_dir / "models_mongo.py"
+        models_content = self._generate_mongo_models(mongo_entities_list)
+        models_path.write_text(models_content, encoding="utf-8")
+        artifacts["models_mongo"] = str(models_path.relative_to(ws.root))
+        
+        return artifacts
+    
+    def _generate_mongo_collections_md(self, entities: List[Dict[str, Any]]) -> str:
+        """Generate mongo-collections.md document."""
+        lines = ["# MongoDB Collections"]
+        lines.append("")
+        
+        for entity in entities:
+            entity_name = entity["name"]
+            collection_name = self._to_mongo_collection_name(entity_name)
+            fields = entity.get("fields", [])
+            
+            lines.append(f"## {collection_name}")
+            lines.append(f"- **Entity:** {entity_name}")
+            lines.append(f"- **Fields:** {len(fields)}")
+            lines.append("")
+            lines.append("### Schema Summary")
+            lines.append("")
+            
+            for field in fields:
+                field_type = field.get("type", "unknown")
+                required = field.get("required", False)
+                lines.append(f"- `{field['name']}`: {field_type} ({'required' if required else 'optional'})")
+            
+            lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _to_mongo_collection_name(self, entity_name: str) -> str:
+        """Convert entity name to MongoDB collection name (snake_case plural)."""
+        snake = to_snake_case(entity_name)
+        # Simple pluralization (add 's')
+        if not snake.endswith('s'):
+            return snake + "s"
+        return snake
+    
+    def _generate_mongo_schemas_json(self, entities: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate JSON Schema-like definitions for MongoDB collections."""
+        schemas = {}
+        
+        for entity in entities:
+            entity_name = entity["name"]
+            collection_name = self._to_mongo_collection_name(entity_name)
+            fields = entity.get("fields", [])
+            
+            schema = {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+            
+            # Add _id field (prefer string for Base44 IDs)
+            schema["properties"]["_id"] = {
+                "type": "string",
+                "description": "Document ID"
+            }
+            
+            # Add entity fields
+            for field in fields:
+                field_name = field["name"]
+                raw = field.get("raw", {})
+                
+                # Convert field to JSON schema property
+                field_schema = self._field_to_mongo_schema_property(raw, field)
+                schema["properties"][field_name] = field_schema
+                
+                if field.get("required", False):
+                    schema["required"].append(field_name)
+            
+            schemas[collection_name] = schema
+        
+        return schemas
+    
+    def _field_to_mongo_schema_property(self, raw: Dict[str, Any], field: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert field to MongoDB JSON schema property."""
+        field_type = field.get("type", "string").lower()
+        schema = {}
+        
+        # Map types
+        type_map = {
+            "string": "string",
+            "number": "number",
+            "integer": "integer",
+            "boolean": "boolean",
+            "datetime": "string",
+            "date": "string",
+            "array": "array",
+            "object": "object",
+        }
+        
+        schema["type"] = type_map.get(field_type, "string")
+        
+        # Preserve nested structures
+        if "properties" in raw:
+            schema["properties"] = raw["properties"]
+        if "additionalProperties" in raw:
+            schema["additionalProperties"] = raw["additionalProperties"]
+        if "items" in raw:
+            schema["items"] = raw["items"]
+        
+        # Preserve enums
+        if "enum" in raw:
+            schema["enum"] = raw["enum"]
+        
+        # Preserve formats
+        if "format" in raw:
+            schema["format"] = raw["format"]
+        elif field_type == "datetime":
+            schema["format"] = "date-time"
+        elif field_type == "date":
+            schema["format"] = "date"
+        
+        # Preserve description
+        if "description" in raw:
+            schema["description"] = raw["description"]
+        
+        return schema
+    
+    def _generate_mongo_models(self, entities: List[Dict[str, Any]]) -> str:
+        """Generate Pydantic models for Mongo entities."""
+        lines = [
+            "from pydantic import BaseModel, Field",
+            "from typing import Optional, List, Dict, Any",
+            "from datetime import datetime",
+            "",
+        ]
+        
+        for entity in entities:
+            entity_name = entity["name"]
+            collection_name = self._to_mongo_collection_name(entity_name)
+            fields = entity.get("fields", [])
+            
+            lines.append(f"class {entity_name}(BaseModel):")
+            lines.append(f'    """MongoDB model for {collection_name} collection."""')
+            lines.append("")
+            
+            # Generate fields
+            has_id = False
+            for field in fields:
+                field_name = field["name"]
+                field_type = field.get("type", "string").lower()
+                required = field.get("required", False)
+                nullable = field.get("nullable", False)
+                raw = field.get("raw", {})
+                
+                if field_name == "id":
+                    has_id = True
+                    lines.append(f'    id: str = Field(..., alias="_id", description="Document ID")')
+                    continue
+                
+                # Map to Python type
+                python_type = self._map_python_type(field_type, raw, required and not nullable)
+                field_def = f"    {field_name}: {python_type}"
+                
+                # Add Field() if needed
+                field_args = []
+                if not required or nullable:
+                    field_args.append("default=None")
+                if "description" in raw:
+                    field_args.append(f'description="{raw["description"]}"')
+                
+                if field_args:
+                    field_def += " = Field(" + ", ".join(field_args) + ")"
+                
+                lines.append(field_def)
+            
+            if not has_id:
+                lines.append('    id: str = Field(..., alias="_id", description="Document ID")')
+            
+            lines.append("")
+            lines.append("    class Config:")
+            lines.append("        populate_by_name = True")
+            lines.append("")
+            lines.append("")
+            lines.append(f"class {entity_name}Repository:")
+            lines.append(f'    """Repository interface for {entity_name}."""')
+            lines.append("")
+            lines.append(f"    def find_by_id(self, id: str) -> Optional[{entity_name}]:")
+            lines.append(f'        """Find {entity_name.lower()} by ID."""')
+            lines.append("        raise NotImplementedError")
+            lines.append("")
+            lines.append(f"    def find_all(self) -> List[{entity_name}]:")
+            lines.append(f'        """Find all {entity_name.lower()} entities."""')
+            lines.append("        raise NotImplementedError")
+            lines.append("")
+            lines.append(f"    def create(self, entity: {entity_name}) -> {entity_name}:")
+            lines.append(f'        """Create a new {entity_name.lower()}."""')
+            lines.append("        raise NotImplementedError")
+            lines.append("")
+            lines.append(f"    def update(self, id: str, entity: {entity_name}) -> Optional[{entity_name}]:")
+            lines.append(f'        """Update a {entity_name.lower()} by ID."""')
+            lines.append("        raise NotImplementedError")
+            lines.append("")
+            lines.append(f"    def delete(self, id: str) -> bool:")
+            lines.append(f'        """Delete a {entity_name.lower()} by ID."""')
+            lines.append("        raise NotImplementedError")
+            lines.append("")
+        
+        return "\n".join(lines)
+    
+    def _map_python_type(self, field_type: str, raw: Dict[str, Any], required: bool) -> str:
+        """Map field type to Python type annotation."""
+        type_map = {
+            "string": "str",
+            "number": "float",
+            "integer": "int",
+            "boolean": "bool",
+            "datetime": "datetime",
+            "date": "datetime",
+        }
+        
+        if field_type == "array":
+            items = raw.get("items", {})
+            if isinstance(items, dict):
+                item_type = items.get("type", "string")
+                python_item_type = type_map.get(item_type, "Any")
+                return f"List[{python_item_type}]"
+            return "List[Any]"
+        
+        if field_type == "object":
+            return "Dict[str, Any]"
+        
+        python_type = type_map.get(field_type.lower(), "str")
+        if not required:
+            return f"Optional[{python_type}]"
+        
+        return python_type
 
 
 class ApiDesignerAgent(BaseAgent):
