@@ -531,8 +531,8 @@ class DomainModelerAgent(BaseAgent):
             artifacts = getattr(job, 'artifacts', {})
             db_preferences = artifacts.get('db_preferences', {}) if isinstance(artifacts, dict) else {}
             
-            # Determine strategy
-            hybrid_strategy = db_preferences.get("hybridStrategy", "auto" if db_stack == "hybrid" else None)
+            # Determine strategy (default: docToMongo for hybrid)
+            hybrid_strategy = db_preferences.get("hybridStrategy", "docToMongo" if db_stack == "hybrid" else None)
             
             # Classify entities
             storage_plan = self._classify_entities(entities, db_stack, db_preferences, hybrid_strategy)
@@ -633,18 +633,20 @@ class DomainModelerAgent(BaseAgent):
                 })
                 continue
             
-            # AUTO classification (only if hybrid and strategy is auto)
+            # AUTO classification (only if hybrid)
             if db_stack == "hybrid":
-                if hybrid_strategy == "auto":
-                    store, reason = self._classify_entity_auto(entity)
+                # Determine strategy (auto is kept for backwards compatibility, maps to docToMongo)
+                if hybrid_strategy in ("docToMongo", "postgresJsonbFirst", "auto"):
+                    strategy = hybrid_strategy if hybrid_strategy != "auto" else "docToMongo"
+                    store, reason = self._classify_entity_auto(entity, strategy)
                     classified.append({
                         "name": entity_name,
                         "store": store,
                         "reason": reason
                     })
                 else:
-                    # Explicit strategy but no override - use AUTO as fallback
-                    store, reason = self._classify_entity_auto(entity)
+                    # Fallback to docToMongo if unknown strategy
+                    store, reason = self._classify_entity_auto(entity, "docToMongo")
                     classified.append({
                         "name": entity_name,
                         "store": store,
@@ -675,25 +677,29 @@ class DomainModelerAgent(BaseAgent):
             "entities": classified
         }
     
-    def _classify_entity_auto(self, entity: Dict[str, Any]) -> tuple[str, str]:
-        """Classify entity using AUTO strategy rules."""
+    def _classify_entity_auto(self, entity: Dict[str, Any], strategy: str = "docToMongo") -> tuple[str, str]:
+        """Classify entity using AUTO strategy rules.
+        
+        Args:
+            entity: Entity to classify
+            strategy: Classification strategy - "docToMongo" (default) or "postgresJsonbFirst"
+        """
         fields = entity.get("fields", [])
         entity_name = entity["name"]
         
-        # Rule 1: Check for complex objects/arrays
-        for field in fields:
-            field_type = field.get("type", "").lower()
-            raw = field.get("raw", {})
-            
-            if field_type in ("object", "array"):
-                # Check if complex
+        if strategy == "docToMongo":
+            # docToMongo strategy: any complex object/map/array-of-object → mongo
+            for field in fields:
+                field_type = field.get("type", "").lower()
+                raw = field.get("raw", {})
+                
                 if field_type == "object":
                     if "properties" in raw and raw["properties"]:
                         # Has nested properties - complex
-                        return "mongo", f"field '{field['name']}' is complex object with nested properties"
+                        return "mongo", f"field '{field['name']}' has nested properties"
                     if "additionalProperties" in raw and raw.get("additionalProperties") is True:
-                        # Open schema - complex
-                        return "mongo", f"field '{field['name']}' is object with additionalProperties"
+                        # Open schema/map - complex
+                        return "mongo", f"field '{field['name']}' has additionalProperties map"
                 elif field_type == "array":
                     items = raw.get("items", {})
                     if isinstance(items, dict) and items.get("type") == "object":
@@ -703,21 +709,68 @@ class DomainModelerAgent(BaseAgent):
                         # Array of complex objects
                         return "mongo", f"field '{field['name']}' is array of objects with nested properties"
         
-        # Rule 3: Check field count and nesting depth
+        elif strategy == "postgresJsonbFirst":
+            # postgresJsonbFirst strategy: keep postgres unless deep nesting detected
+            for field in fields:
+                field_type = field.get("type", "").lower()
+                raw = field.get("raw", {})
+                
+                if field_type == "array":
+                    items = raw.get("items", {})
+                    if isinstance(items, dict) and items.get("type") == "object":
+                        # Array of objects - deep nesting
+                        return "mongo", f"field '{field['name']}' is array of objects (deep nesting)"
+                    if isinstance(items, dict) and "properties" in items:
+                        # Array of complex objects - deep nesting
+                        return "mongo", f"field '{field['name']}' is array of objects with nested properties (deep nesting)"
+                elif field_type == "object":
+                    # Check nesting depth > 1
+                    if "properties" in raw and raw["properties"]:
+                        depth = self._calculate_field_nesting_depth(raw)
+                        if depth > 1:
+                            return "mongo", f"field '{field['name']}' has nested properties (depth {depth} > 1)"
+                    # additionalProperties maps can stay in postgres (stored as JSONB)
+                    # Only reject if it has nested properties with depth > 1
+                    if "additionalProperties" in raw and raw.get("additionalProperties") is True:
+                        # Check if it has properties that are nested
+                        if "properties" in raw and raw["properties"]:
+                            depth = self._calculate_field_nesting_depth(raw)
+                            if depth > 1:
+                                return "mongo", f"field '{field['name']}' has additionalProperties map with nested properties (depth {depth} > 1)"
+        
+        # Rule 3: Check field count
         if len(fields) > self.MAX_POSTGRES_FIELDS:
             return "mongo", f"entity has {len(fields)} fields (exceeds {self.MAX_POSTGRES_FIELDS})"
-        
-        # Check for deep nesting
-        max_depth = self._calculate_max_nesting_depth(fields)
-        if max_depth > 3:
-            return "mongo", f"entity has deeply nested structures (depth {max_depth})"
         
         # Rule 4: Check for relational patterns (optional heuristic)
         if self._is_relational_pattern(entity_name, fields):
             return "postgres", f"entity matches relational pattern and has only primitive fields"
         
-        # Rule 2: Default to postgres
+        # Default to postgres
         return "postgres", "entity has only primitive fields or simple structures"
+    
+    def _calculate_field_nesting_depth(self, raw_schema: Dict[str, Any]) -> int:
+        """Calculate nesting depth of a single field's schema."""
+        if not isinstance(raw_schema, dict):
+            return 0
+        
+        if "properties" not in raw_schema or not raw_schema["properties"]:
+            return 0
+        
+        max_depth = 1
+        for prop_value in raw_schema["properties"].values():
+            if isinstance(prop_value, dict):
+                prop_type = prop_value.get("type")
+                if prop_type == "object" and "properties" in prop_value:
+                    depth = 1 + self._calculate_field_nesting_depth(prop_value)
+                    max_depth = max(max_depth, depth)
+                elif prop_type == "array" and "items" in prop_value:
+                    items = prop_value["items"]
+                    if isinstance(items, dict) and items.get("type") == "object":
+                        depth = 1 + self._calculate_field_nesting_depth(items)
+                        max_depth = max(max_depth, depth)
+        
+        return max_depth
     
     def _calculate_max_nesting_depth(self, fields: List[Dict[str, Any]]) -> int:
         """Calculate maximum nesting depth in entity fields."""
