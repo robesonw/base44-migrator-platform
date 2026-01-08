@@ -6,7 +6,7 @@ from app.agents.impl_clone import CloneSourceAgent, CloneTargetAgent
 from app.agents.impl_intake import RepoIntakeAgent
 from app.agents.impl_design import DomainModelerAgent, ApiDesignerAgent
 from app.agents.impl_build import BackendBuilderAgent, AsyncArchitectAgent, FrontendWiringAgent, VerificationAgent
-from app.agents.impl_gitops import GitOpsAgent
+from app.agents.git_commit_agent import GitCommitAgent
 
 @dataclass
 class AgentRegistry:
@@ -27,5 +27,5 @@ class AgentRegistry:
             JobStage.ADD_ASYNC: AsyncArchitectAgent(),
             JobStage.WIRE_FRONTEND: FrontendWiringAgent(),
             JobStage.VERIFY: VerificationAgent(),
-            JobStage.CREATE_PR: GitOpsAgent(),
+            JobStage.CREATE_PR: GitCommitAgent(),
         })
