@@ -17,6 +17,8 @@ from app.generators.backend_gen.render import (
     render_dockerfile,
     render_docker_compose,
     render_readme,
+    render_db_postgres,
+    render_db_mongo,
 )
 from app.generators.backend_gen.writer import write_files
 
@@ -71,6 +73,8 @@ def generate_backend(
         GeneratedFile(path="app/api/__init__.py", content=render_api_init()),
         GeneratedFile(path="app/api/health.py", content=render_api_health()),
         GeneratedFile(path="app/core/config.py", content=render_core_config()),
+        GeneratedFile(path="app/db/postgres.py", content=render_db_postgres()),
+        GeneratedFile(path="app/db/mongo.py", content=render_db_mongo()),
         GeneratedFile(path="requirements.txt", content=render_requirements_txt()),
         GeneratedFile(path="Dockerfile", content=render_dockerfile()),
         GeneratedFile(path="docker-compose.yml", content=render_docker_compose()),
