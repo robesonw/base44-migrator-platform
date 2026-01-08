@@ -136,5 +136,6 @@ Thumbs.db
 # Project specific
 *.db
 workspace/
+workspaces/
 *.sqlite
 
