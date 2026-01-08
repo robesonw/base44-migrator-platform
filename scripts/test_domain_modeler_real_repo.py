@@ -82,7 +82,11 @@ with open(contract_path, "r", encoding="utf-8") as f:
 print("\nStep 3: Running DomainModelerAgent...")
 domain_job = MagicMock()
 domain_job.db_stack = DB_STACK
-domain_job.artifacts = {}  # No db_preferences
+domain_job.artifacts = {
+    "db_preferences": {
+        "hybridStrategy": "docToMongo"
+    }
+}
 domain_job.id = "test-job-id"
 
 domain_result = DomainModelerAgent().run(domain_job, mock_ws)
