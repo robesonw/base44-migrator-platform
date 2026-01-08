@@ -30,8 +30,8 @@ echo "=== Creating a new job ==="
 JOB_RESPONSE=$(curl -s -X POST "${API_URL}/v1/jobs" \
     -H "Content-Type: application/json" \
     -d '{
-        "source_repo_url": "https://github.com/octocat/Hello-World",
-        "target_repo_url": "https://github.com/octocat/Hello-World",
+        "source_repo_url": "https://github.com/robesonw/culinary-compass",
+        "target_repo_url": "https://github.com/robesonw/cc",
         "backend_stack": "python",
         "db_stack": "postgres",
         "commit_mode": "pr"

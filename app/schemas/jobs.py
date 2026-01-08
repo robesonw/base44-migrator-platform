@@ -4,8 +4,8 @@ from datetime import datetime
 from app.core.workflow import JobStage
 
 class JobCreateRequest(BaseModel):
-    source_repo_url: str = Field(..., examples=["https://github.com/org/source"])
-    target_repo_url: str = Field(..., examples=["https://github.com/org/target"])
+    source_repo_url: str = Field(..., examples=["https://github.com/robesonw/culinary-compass"])
+    target_repo_url: str = Field(..., examples=["https://github.com/robesonw/cc"])
     backend_stack: Literal["python", "node"] = "python"
     db_stack: Literal["postgres", "mongo"] = "postgres"
     commit_mode: Literal["pr", "direct"] = "pr"

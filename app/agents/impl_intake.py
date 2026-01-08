@@ -64,22 +64,34 @@ class RepoIntakeAgent(BaseAgent):
                 for e in entity_result.entities
             ]
             
+            # Ensure framework is always an object with name and versionHint
+            if not isinstance(framework_info, dict) or "name" not in framework_info:
+                framework_info = {"name": "unknown", "versionHint": ""}
+            if "versionHint" not in framework_info:
+                framework_info["versionHint"] = ""
+            
+            # Log counts
+            log.info(
+                f"Intake scan completed: {len(entities_list)} entities, "
+                f"{len(endpoints)} endpoints, {len(env_vars)} env vars found"
+            )
+            
             contract = {
                 "source_repo_url": job.source_repo_url,
                 "framework": framework_info,
-                "envVars": env_vars,
-                "apiClientFiles": api_client_files,
-                "entities": entities_list,
+                "envVars": env_vars if env_vars else [],
+                "apiClientFiles": api_client_files if api_client_files else [],
+                "entities": entities_list if entities_list else [],
                 "entityDetection": {
-                    "directoriesFound": entity_result.directoriesFound,
+                    "directoriesFound": entity_result.directoriesFound if entity_result.directoriesFound else [],
                     "filesParsed": entity_result.filesParsed,
-                    "filesFailed": entity_result.filesFailed,
+                    "filesFailed": entity_result.filesFailed if entity_result.filesFailed else [],
                 },
-                "endpointsUsed": endpoints,
+                "endpointsUsed": endpoints if endpoints else [],
                 "notes": [],
             }
             
-            # Add notes if entities couldn't be parsed
+            # Add meaningful notes (no TODO placeholders)
             if entity_result.filesFailed:
                 contract["notes"].append(
                     f"Failed to parse {len(entity_result.filesFailed)} entity file(s). "
@@ -90,6 +102,16 @@ class RepoIntakeAgent(BaseAgent):
                 contract["notes"].append(
                     "No entities found. Ensure entity JSON files are in src/Entities/, "
                     "src/entities/, src/models/, or app/Entities/ directories."
+                )
+            
+            if not endpoints:
+                contract["notes"].append(
+                    "No endpoints detected. UI may not call external APIs or uses patterns not detected by scanner."
+                )
+            
+            if not env_vars:
+                contract["notes"].append(
+                    "No environment variables detected. UI may not use NEXT_PUBLIC_* or VITE_* variables."
                 )
             
             # Write contract file
@@ -107,9 +129,21 @@ class RepoIntakeAgent(BaseAgent):
         
         except Exception as e:
             log.exception(f"Failed to generate ui-contract.json: {e}")
+            error_message = str(e)
+            
+            # Write a small failure artifact (NOT a TODO placeholder contract)
+            artifact_path = ws.artifacts_dir / "ui-contract-error.json"
+            failure_artifact = {
+                "error": True,
+                "source_repo_url": job.source_repo_url,
+                "error_message": error_message,
+                "stage": str(self.stage),
+            }
+            artifact_path.write_text(json.dumps(failure_artifact, indent=2), encoding="utf-8")
+            
             return AgentResult(
                 self.stage,
                 False,
-                f"Failed to generate ui-contract.json: {e}",
-                {}
+                f"Failed to generate ui-contract.json: {error_message}",
+                {"error_artifact": str(artifact_path.relative_to(ws.root))}
             )

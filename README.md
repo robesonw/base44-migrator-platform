@@ -67,8 +67,8 @@ docker compose up --build
 curl -X POST http://localhost:8080/v1/jobs \
   -H "Content-Type: application/json" \
   -d '{
-    "source_repo_url": "https://github.com/ORG/source-base44-ui",
-    "target_repo_url": "https://github.com/ORG/target-migrated-repo",
+    "source_repo_url": "https://github.com/robesonw/culinary-compass",
+    "target_repo_url": "https://github.com/robesonw/cc",
     "backend_stack": "python",
     "db_stack": "postgres",
     "commit_mode": "pr"
