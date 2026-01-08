@@ -82,7 +82,7 @@ def test_backend_gen_skeleton():
         )
         
         # Assert files were generated
-        assert len(generated_files) == 8, f"Expected 8 files, got {len(generated_files)}"
+        assert len(generated_files) == 10, f"Expected 10 files, got {len(generated_files)}"
         
         # Expected file paths
         expected_files = [
@@ -90,6 +90,8 @@ def test_backend_gen_skeleton():
             "app/api/__init__.py",
             "app/api/health.py",
             "app/core/config.py",
+            "app/db/postgres.py",
+            "app/db/mongo.py",
             "requirements.txt",
             "Dockerfile",
             "docker-compose.yml",
@@ -122,6 +124,18 @@ def test_backend_gen_skeleton():
         config_py = (out_dir / "app/core/config.py").read_text(encoding="utf-8")
         assert "from pydantic_settings import BaseSettings" in config_py
         assert "class Settings" in config_py
+        assert "postgres_url" in config_py
+        assert "mongo_url" in config_py
+        assert "mongo_db" in config_py
+        
+        postgres_py = (out_dir / "app/db/postgres.py").read_text(encoding="utf-8")
+        assert "from sqlalchemy.ext.asyncio import" in postgres_py
+        assert "create_async_engine" in postgres_py
+        assert "AsyncSession" in postgres_py
+        
+        mongo_py = (out_dir / "app/db/mongo.py").read_text(encoding="utf-8")
+        assert "from motor.motor_asyncio import AsyncIOMotorClient" in mongo_py
+        assert "get_collection" in mongo_py
         
         requirements_txt = (out_dir / "requirements.txt").read_text(encoding="utf-8")
         assert "fastapi" in requirements_txt

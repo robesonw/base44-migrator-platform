@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     app_name: str = "backend-api"
     api_host: str = "0.0.0.0"
     api_port: int = 8080
+    
+    postgres_url: str
+    mongo_url: str
+    mongo_db: str
 
 settings = Settings()
 """
@@ -51,6 +55,9 @@ def render_requirements_txt() -> str:
 uvicorn[standard]==0.30.6
 pydantic==2.9.2
 pydantic-settings==2.5.2
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+motor==3.6.0
 """
 
 
@@ -84,6 +91,75 @@ def render_docker_compose() -> str:
       - "8080:8080"
     environment:
       - APP_NAME=backend-api
+      - POSTGRES_URL=postgresql+asyncpg://app:app@postgres:5432/app
+      - MONGO_URL=mongodb://mongo:27017
+      - MONGO_DB=app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  mongo_data:
+"""
+
+
+def render_db_postgres() -> str:
+    """Generate app/db/postgres.py content."""
+    return """from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from app.core.config import settings
+
+engine = create_async_engine(settings.postgres_url, echo=False, pool_pre_ping=True)
+AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+async def get_db() -> AsyncSession:
+    async with AsyncSessionLocal() as session:
+        yield session
+"""
+
+
+def render_db_mongo() -> str:
+    """Generate app/db/mongo.py content."""
+    return """from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.config import settings
+
+client = AsyncIOMotorClient(settings.mongo_url)
+
+def get_database():
+    return client[settings.mongo_db]
+
+def get_collection(db, name: str):
+    return db[name]
 """
 
 
