@@ -29,7 +29,7 @@ def test_repo_intake_agent_integration():
         
         # Create mock job
         mock_job = MagicMock()
-        mock_job.source_repo_url = "https://github.com/test/repo"
+        mock_job.source_repo_url = "https://github.com/robesonw/culinary-compass"
         
         # Create a simple mock workspace object
         class MockWorkspace:
@@ -70,9 +70,24 @@ def test_repo_intake_agent_integration():
         # Assert at least 1 endpoint was found
         assert len(contract["endpointsUsed"]) >= 1, "No endpoints found in contract"
         
+        # Assert no placeholder content
+        contract_text = json.dumps(contract)
+        assert "octocat/Hello-World" not in contract_text, \
+            "Contract contains placeholder URL 'octocat/Hello-World'"
+        assert '"TODO:"' not in contract_text, \
+            "Contract contains TODO placeholder"
+        
         # Assert no placeholder notes
         notes_text = " ".join(contract.get("notes", [])).lower()
         assert "todo: implement real scanning" not in notes_text, \
             "Contract contains placeholder TODO notes"
         assert "this file should drive openapi" not in notes_text, \
             "Contract contains placeholder notes"
+        
+        # Assert framework is an object with name and versionHint
+        assert isinstance(contract["framework"], dict), \
+            "Framework must be an object"
+        assert "name" in contract["framework"], \
+            "Framework must have 'name' field"
+        assert "versionHint" in contract["framework"], \
+            "Framework must have 'versionHint' field"
