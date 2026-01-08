@@ -1,0 +1,13 @@
+{
+  "name": "Recipe",
+  "fields": [
+    {"name": "id", "type": "string", "required": true},
+    {"name": "title", "type": "string", "required": true},
+    {"name": "rating", "type": "number", "required": false},
+    {"name": "createdAt", "type": "datetime", "required": true, "nullable": false}
+  ],
+  "relationships": [
+    {"kind": "one_to_many", "to": "Ingredient", "field": "ingredients"}
+  ]
+}
+

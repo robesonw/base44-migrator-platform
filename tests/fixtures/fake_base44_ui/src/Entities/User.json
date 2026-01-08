@@ -1,0 +1,9 @@
+{
+  "entity": "User",
+  "schema": {
+    "id": {"type": "uuid"},
+    "email": {"type": "string"},
+    "name": {"type": "string", "required": true}
+  }
+}
+
