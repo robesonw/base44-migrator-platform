@@ -150,16 +150,47 @@ def test_api_designer_generates_openapi_from_contract():
         assert "RecipeUpdate" in schemas, "RecipeUpdate schema not found"
         assert "IngredientUpdate" in schemas, "IngredientUpdate schema not found"
         
+        # Validate Error schema exists
+        assert "Error" in schemas, "Error schema not found"
+        error_schema = schemas["Error"]
+        assert error_schema["type"] == "object"
+        assert "error" in error_schema.get("properties", {})
+        
         # Validate CRUD paths exist for Recipe
         assert "/api/recipe" in openapi_spec["paths"], "Recipe list path not found"
-        assert "get" in openapi_spec["paths"]["/api/recipe"], "Recipe GET list not found"
-        assert "post" in openapi_spec["paths"]["/api/recipe"], "Recipe POST create not found"
+        recipe_list_path = openapi_spec["paths"]["/api/recipe"]
+        assert "get" in recipe_list_path, "Recipe GET list not found"
+        assert "post" in recipe_list_path, "Recipe POST create not found"
+        
+        # Validate operationId for Recipe list
+        assert recipe_list_path["get"].get("operationId") == "recipe_list", "Recipe list operationId not found"
+        assert recipe_list_path["post"].get("operationId") == "recipe_create", "Recipe create operationId not found"
+        
+        # Validate error responses for Recipe list GET
+        list_get_responses = recipe_list_path["get"]["responses"]
+        assert "400" in list_get_responses, "400 error response not found"
+        assert "404" in list_get_responses, "404 error response not found"
+        assert "500" in list_get_responses, "500 error response not found"
+        assert list_get_responses["400"]["content"]["application/json"]["schema"]["$ref"] == "#/components/schemas/Error"
+        
         assert "/api/recipe/{id}" in openapi_spec["paths"], "Recipe detail path not found"
         recipe_detail = openapi_spec["paths"]["/api/recipe/{id}"]
         assert "get" in recipe_detail, "Recipe GET one not found"
         assert "put" in recipe_detail, "Recipe PUT not found"
         assert "patch" in recipe_detail, "Recipe PATCH not found"
         assert "delete" in recipe_detail, "Recipe DELETE not found"
+        
+        # Validate operationId for Recipe detail operations
+        assert recipe_detail["get"].get("operationId") == "recipe_get", "Recipe get operationId not found"
+        assert recipe_detail["put"].get("operationId") == "recipe_update", "Recipe update operationId not found"
+        assert recipe_detail["patch"].get("operationId") == "recipe_patch", "Recipe patch operationId not found"
+        assert recipe_detail["delete"].get("operationId") == "recipe_delete", "Recipe delete operationId not found"
+        
+        # Validate error responses for Recipe detail GET
+        detail_get_responses = recipe_detail["get"]["responses"]
+        assert "400" in detail_get_responses, "400 error response not found in detail GET"
+        assert "404" in detail_get_responses, "404 error response not found in detail GET"
+        assert "500" in detail_get_responses, "500 error response not found in detail GET"
         
         # Validate CRUD paths exist for Ingredient
         assert "/api/ingredient" in openapi_spec["paths"], "Ingredient list path not found"
