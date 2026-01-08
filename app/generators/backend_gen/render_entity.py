@@ -68,7 +68,7 @@ def render_entity_model(entity_name: str, fields: List[Dict[str, Any]]) -> str:
             continue
         base_type = _map_field_to_pydantic_type(field)
         if not field.get("required", False) or field.get("nullable", False):
-            field_type = f"Optional[{base_type}]"
+            field_type = f"Optional[{base_type}] = None"
         else:
             field_type = base_type
         lines.append(f"    {field_name}: {field_type}")
