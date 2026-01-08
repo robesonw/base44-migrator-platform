@@ -1,0 +1,9 @@
+[project]
+name = "base44-migrator-platform"
+version = "0.1.0"
+description = "Automation platform for Base44 UI -> full-stack migration using collaborating agents"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ruff]
+line-length = 100

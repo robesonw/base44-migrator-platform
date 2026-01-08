@@ -1,0 +1,42 @@
+flowchart TB
+  subgraph Orchestrator
+    API[FastAPI]
+    DB[(Postgres)]
+    API --> DB
+  end
+
+  subgraph Queue
+    R[Redis]
+    C[Celery Worker]
+    R --> C
+  end
+
+  API --> R
+
+  subgraph Workspace["Job Workspace"]
+    SRC[Source Repo Clone]
+    TGT[Target Repo Clone]
+    ART[Artifacts: ui-contract.json, openapi.yaml, ...]
+  end
+
+  C --> Workspace
+  C --> Agents
+
+  subgraph Agents
+    A1[RepoIntakeAgent]
+    A2[DomainModelerAgent]
+    A3[ApiDesignerAgent]
+    A4[BackendBuilderAgent]
+    A5[AsyncArchitectAgent]
+    A6[FrontendWiringAgent]
+    A7[VerificationAgent]
+    A8[GitOpsAgent]
+  end
+
+  A1 --> ART
+  A2 --> ART
+  A3 --> ART
+  A4 --> TGT
+  A6 --> TGT
+  A7 --> ART
+  A8 --> GH[GitHub PR/Branch]
