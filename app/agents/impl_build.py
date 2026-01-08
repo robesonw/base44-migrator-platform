@@ -1,17 +1,57 @@
 from pathlib import Path
 from app.agents.base import BaseAgent, AgentResult
 from app.core.workflow import JobStage
+from app.generators.backend_gen import generate_backend
 
 class BackendBuilderAgent(BaseAgent):
     stage = JobStage.GENERATE_BACKEND
     def run(self, job, ws):
-        marker = Path(ws.target_dir) / "MIGRATION_BACKEND_TODO.md"
-        marker.write_text(
-            "# Backend generation TODO\n\n"
-            "Generate backend (python|node) based on workspace/openapi.yaml and workspace/ui-contract.json.\n",
-            encoding="utf-8"
-        )
-        return AgentResult(self.stage, True, "Created backend TODO marker", {"backend_marker": "target/MIGRATION_BACKEND_TODO.md"})
+        # Get paths to required artifacts
+        ui_contract_path = ws.artifacts_dir / "ui-contract.json"
+        storage_plan_path = ws.artifacts_dir / "storage-plan.json"
+        
+        # Check that required artifacts exist
+        if not ui_contract_path.exists():
+            return AgentResult(
+                self.stage,
+                False,
+                "ui-contract.json not found in workspace artifacts",
+                {}
+            )
+        
+        if not storage_plan_path.exists():
+            return AgentResult(
+                self.stage,
+                False,
+                "storage-plan.json not found in workspace artifacts",
+                {}
+            )
+        
+        # Set output directory for generated backend
+        out_dir = ws.root / "generated" / "backend"
+        
+        try:
+            # Generate backend skeleton
+            generated_files = generate_backend(
+                job_id=job.id,
+                ui_contract_path=ui_contract_path,
+                storage_plan_path=storage_plan_path,
+                out_dir=out_dir,
+            )
+            
+            return AgentResult(
+                self.stage,
+                True,
+                f"Generated {len(generated_files)} backend files",
+                {"backend_dir": str(out_dir.relative_to(ws.root))}
+            )
+        except Exception as e:
+            return AgentResult(
+                self.stage,
+                False,
+                f"Backend generation failed: {e}",
+                {}
+            )
 
 class AsyncArchitectAgent(BaseAgent):
     stage = JobStage.ADD_ASYNC
