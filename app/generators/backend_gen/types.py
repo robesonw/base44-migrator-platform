@@ -33,3 +33,4 @@ class GeneratedFile:
     path: str  # Relative path from output directory
     content: str  # File contents
 
+

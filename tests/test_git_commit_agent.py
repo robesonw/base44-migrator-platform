@@ -301,3 +301,4 @@ def test_agent_stage():
     agent = GitCommitAgent()
     assert agent.stage == JobStage.CREATE_PR
 
+

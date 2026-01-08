@@ -66,3 +66,4 @@ def build_minimal_payload(ui_contract_path: Path, entity_name: str) -> Dict[str,
     
     return payload
 
+

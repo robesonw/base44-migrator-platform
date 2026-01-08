@@ -51,3 +51,4 @@ def to_plural_snake_case(name: str) -> str:
     else:
         return singular + 's'
 
+

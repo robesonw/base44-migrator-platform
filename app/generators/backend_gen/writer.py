@@ -21,3 +21,4 @@ def write_files(files: List[GeneratedFile], out_dir: Path) -> None:
         # Write file content
         file_path.write_text(file.content, encoding="utf-8")
 
+
