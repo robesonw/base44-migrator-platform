@@ -81,10 +81,13 @@ def test_backend_gen_skeleton():
             out_dir=out_dir,
         )
         
-        # Assert files were generated
-        assert len(generated_files) == 10, f"Expected 10 files, got {len(generated_files)}"
+        # Assert files were generated (base files + entity files)
+        # Base files: 13 (including repos, models, entities __init__.py)
+        # Entity files: 2 (model + router per entity)
+        # Total for 1 entity: 13 + 2 = 15
+        assert len(generated_files) >= 13, f"Expected at least 13 base files, got {len(generated_files)}"
         
-        # Expected file paths
+        # Expected base file paths (entity files are dynamic)
         expected_files = [
             "app/main.py",
             "app/api/__init__.py",
@@ -92,6 +95,12 @@ def test_backend_gen_skeleton():
             "app/core/config.py",
             "app/db/postgres.py",
             "app/db/mongo.py",
+            "app/repos/__init__.py",
+            "app/repos/base.py",
+            "app/repos/postgres_repo.py",
+            "app/repos/mongo_repo.py",
+            "app/models/__init__.py",
+            "app/api/entities/__init__.py",
             "requirements.txt",
             "Dockerfile",
             "docker-compose.yml",

@@ -1,7 +1,7 @@
 """Orchestrator for backend code generation."""
 import json
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 from app.generators.backend_gen.types import (
     EntitySpec,
     StoragePlan,
@@ -19,6 +19,18 @@ from app.generators.backend_gen.render import (
     render_readme,
     render_db_postgres,
     render_db_mongo,
+    render_repos_base,
+    render_repos_postgres_repo,
+    render_repos_mongo_repo,
+)
+from app.generators.backend_gen.render_entity import (
+    render_entity_model,
+    render_entity_router,
+)
+from app.generators.backend_gen.utils import (
+    entity_to_slug,
+    entity_to_path,
+    get_entity_store,
 )
 from app.generators.backend_gen.writer import write_files
 
@@ -67,19 +79,65 @@ def generate_backend(
         entities=storage_plan_data.get("entities", []),
     )
     
-    # Generate all files
+    # Build entity store mapping
+    entity_store_map = {}
+    for entity_entry in storage_plan.entities:
+        entity_store_map[entity_entry["name"]] = entity_entry.get("store", "postgres")
+    
+    # Generate base files
     files = [
-        GeneratedFile(path="app/main.py", content=render_main_py()),
         GeneratedFile(path="app/api/__init__.py", content=render_api_init()),
         GeneratedFile(path="app/api/health.py", content=render_api_health()),
         GeneratedFile(path="app/core/config.py", content=render_core_config()),
         GeneratedFile(path="app/db/postgres.py", content=render_db_postgres()),
         GeneratedFile(path="app/db/mongo.py", content=render_db_mongo()),
+        GeneratedFile(path="app/repos/__init__.py", content="# Repositories package\n"),
+        GeneratedFile(path="app/repos/base.py", content=render_repos_base()),
+        GeneratedFile(path="app/repos/postgres_repo.py", content=render_repos_postgres_repo()),
+        GeneratedFile(path="app/repos/mongo_repo.py", content=render_repos_mongo_repo()),
+        GeneratedFile(path="app/models/__init__.py", content="# Models package\n"),
+        GeneratedFile(path="app/api/entities/__init__.py", content="# Entity routers package\n"),
         GeneratedFile(path="requirements.txt", content=render_requirements_txt()),
         GeneratedFile(path="Dockerfile", content=render_dockerfile()),
         GeneratedFile(path="docker-compose.yml", content=render_docker_compose()),
         GeneratedFile(path="README.md", content=render_readme()),
     ]
+    
+    # Generate entity-specific files
+    entity_routers = []
+    for entity in entities:
+        entity_name = entity.name
+        entity_slug = entity_to_slug(entity_name)
+        path_slug = entity_to_path(entity_name)
+        store_type = entity_store_map.get(entity_name, "postgres")
+        
+        # Generate model
+        model_content = render_entity_model(entity_name, entity.fields)
+        files.append(GeneratedFile(
+            path=f"app/models/{entity_slug}.py",
+            content=model_content
+        ))
+        
+        # Generate router
+        router_content = render_entity_router(
+            entity_name, entity_slug, path_slug, store_type, entity.fields
+        )
+        files.append(GeneratedFile(
+            path=f"app/api/entities/{entity_slug}.py",
+            content=router_content
+        ))
+        
+        entity_routers.append({
+            "entity_name": entity_name,
+            "entity_slug": entity_slug,
+            "path_slug": path_slug,
+        })
+    
+    # Generate main.py with entity routers
+    files.append(GeneratedFile(
+        path="app/main.py",
+        content=render_main_py(entity_routers)
+    ))
     
     # Write files to disk
     write_files(files, out_dir)
