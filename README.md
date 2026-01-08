@@ -29,6 +29,25 @@ flowchart LR
 
 ---
 
+## Development Workflow
+
+This repository uses a **dev/main branch workflow**:
+
+- **`dev` branch**: Active development branch for new features and changes
+- **`main` branch**: Production-ready code
+
+### Workflow Steps:
+1. Create feature branches from `dev`: `git checkout -b feature/my-feature dev`
+2. Make changes and commit to your feature branch
+3. Push feature branch and create PR to `dev`
+4. After merging to `dev`, create PR from `dev` to `main` for production deployment
+
+### Creating PRs:
+- **Via GitHub Web UI**: Visit https://github.com/robesonw/base44-migrator-platform/compare/main...dev
+- **Via Script**: Use `python scripts/create_pr.py` (requires GITHUB_TOKEN environment variable)
+
+---
+
 ## Quickstart
 
 ### Requirements
