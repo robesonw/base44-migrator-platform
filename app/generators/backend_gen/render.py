@@ -107,7 +107,7 @@ def render_docker_compose() -> str:
   api:
     build: .
     ports:
-      - "8080:8080"
+      - "8081:8080"
     environment:
       - APP_NAME=backend-api
       - POSTGRES_URL=postgresql+asyncpg://app:app@postgres:5432/app
@@ -126,7 +126,7 @@ def render_docker_compose() -> str:
       POSTGRES_PASSWORD: app
       POSTGRES_DB: app
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -138,7 +138,7 @@ def render_docker_compose() -> str:
   mongo:
     image: mongo:7
     ports:
-      - "27017:27017"
+      - "27018:27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:

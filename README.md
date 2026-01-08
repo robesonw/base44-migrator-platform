@@ -152,6 +152,36 @@ Workspace artifacts live under `workspaces/<job_id>/workspace/` and drive downst
 
 ---
 
+## Run generated backend smoke test
+
+The smoke test script generates a backend, starts it with Docker Compose, and runs CRUD tests against one Postgres and one Mongo entity.
+
+**Bash (Linux/Mac):**
+```bash
+./scripts/test_generated_backend.sh
+```
+
+**PowerShell (Windows):**
+```powershell
+.\scripts\test_generated_backend.ps1
+```
+
+The script:
+1. Runs the full generator pipeline (Intake → Domain Modeling → API Design → Backend Generation)
+2. Starts the generated backend with `docker compose up -d --build`
+3. Waits for the health endpoint to be ready
+4. Selects one Postgres and one Mongo entity from the storage plan
+5. Performs full CRUD operations (POST, GET list, GET by ID, PATCH, DELETE) on both entities
+6. Writes a `verification.md` report to the workspace artifacts
+7. Cleans up by running `docker compose down -v`
+
+You can customize the test by setting environment variables:
+- `JOB_ID`: Job identifier (default: `generated_backend_smoke`)
+- `SOURCE_REPO_URL`: Source repository URL (default: `https://github.com/robesonw/culinary-compass.git`)
+- `OUT_DIR`: Output directory (default: `test_output/${JOB_ID}/workspace`)
+
+---
+
 ## Repo layout
 ```
 app/
