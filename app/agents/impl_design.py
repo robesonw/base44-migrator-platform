@@ -29,6 +29,13 @@ def to_snake_case(name: str) -> str:
     return s2.lower()
 
 
+def to_camel_case(name: str) -> str:
+    """Convert PascalCase to camelCase."""
+    if not name:
+        return name
+    return name[0].lower() + name[1:]
+
+
 def entity_to_path(entity_name: str) -> str:
     """Convert entity name to API path (prefer kebab-case, fallback to snake-case)."""
     # Try kebab-case first, but if it looks like it's already snake_case, use that
@@ -172,14 +179,69 @@ def entity_to_schemas(entity: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     }
 
 
+def get_error_responses() -> Dict[str, Any]:
+    """Get standard error responses for operations."""
+    return {
+        "400": {
+            "description": "Bad Request",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/Error"}
+                }
+            }
+        },
+        "404": {
+            "description": "Not Found",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/Error"}
+                }
+            }
+        },
+        "500": {
+            "description": "Internal Server Error",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": "#/components/schemas/Error"}
+                }
+            }
+        }
+    }
+
+
 def generate_crud_paths(entity_name: str, path_base: str) -> Dict[str, Any]:
     """Generate CRUD paths for an entity."""
     paths = {}
+    entity_camel = to_camel_case(entity_name)
+    error_responses = get_error_responses()
     
     # GET /api/{path_base} - List
     list_path = f"/api/{path_base}"
+    list_responses = {
+        "200": {
+            "description": "Successful response",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "items": {
+                                "type": "array",
+                                "items": {"$ref": f"#/components/schemas/{entity_name}"}
+                            },
+                            "total": {"type": "integer"}
+                        },
+                        "required": ["items", "total"]
+                    }
+                }
+            }
+        }
+    }
+    list_responses.update(error_responses)
+    
     paths[list_path] = {
         "get": {
+            "operationId": f"{entity_camel}_list",
             "tags": [entity_name],
             "summary": f"List {entity_name} entities",
             "parameters": [
@@ -187,31 +249,25 @@ def generate_crud_paths(entity_name: str, path_base: str) -> Dict[str, Any]:
                 {"name": "offset", "in": "query", "schema": {"type": "integer", "minimum": 0, "default": 0}, "description": "Number of items to skip"},
                 {"name": "q", "in": "query", "schema": {"type": "string"}, "description": "Search query", "required": False},
             ],
-            "responses": {
-                "200": {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "items": {
-                                        "type": "array",
-                                        "items": {"$ref": f"#/components/schemas/{entity_name}"}
-                                    },
-                                    "total": {"type": "integer"}
-                                },
-                                "required": ["items", "total"]
-                            }
-                        }
-                    }
-                }
-            }
+            "responses": list_responses
         }
     }
     
     # POST /api/{path_base} - Create
+    create_responses = {
+        "201": {
+            "description": "Created",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": f"#/components/schemas/{entity_name}"}
+                }
+            }
+        }
+    }
+    create_responses.update(error_responses)
+    
     paths[list_path]["post"] = {
+        "operationId": f"{entity_camel}_create",
         "tags": [entity_name],
         "summary": f"Create a new {entity_name}",
         "requestBody": {
@@ -222,42 +278,50 @@ def generate_crud_paths(entity_name: str, path_base: str) -> Dict[str, Any]:
                 }
             }
         },
-        "responses": {
-            "201": {
-                "description": "Created",
-                "content": {
-                    "application/json": {
-                        "schema": {"$ref": f"#/components/schemas/{entity_name}"}
-                    }
-                }
-            }
-        }
+        "responses": create_responses
     }
     
     # GET /api/{path_base}/{id} - Get one
     detail_path = f"/api/{path_base}/{{id}}"
+    get_responses = {
+        "200": {
+            "description": "Successful response",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": f"#/components/schemas/{entity_name}"}
+                }
+            }
+        }
+    }
+    get_responses.update(error_responses)
+    
     paths[detail_path] = {
         "get": {
+            "operationId": f"{entity_camel}_get",
             "tags": [entity_name],
             "summary": f"Get a {entity_name} by ID",
             "parameters": [
                 {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}, "description": f"{entity_name} ID"}
             ],
-            "responses": {
-                "200": {
-                    "description": "Successful response",
-                    "content": {
-                        "application/json": {
-                            "schema": {"$ref": f"#/components/schemas/{entity_name}"}
-                        }
-                    }
-                }
-            }
+            "responses": get_responses
         }
     }
     
     # PUT /api/{path_base}/{id} - Replace
+    update_responses = {
+        "200": {
+            "description": "Successful response",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": f"#/components/schemas/{entity_name}"}
+                }
+            }
+        }
+    }
+    update_responses.update(error_responses)
+    
     paths[detail_path]["put"] = {
+        "operationId": f"{entity_camel}_update",
         "tags": [entity_name],
         "summary": f"Replace a {entity_name}",
         "parameters": [
@@ -271,20 +335,24 @@ def generate_crud_paths(entity_name: str, path_base: str) -> Dict[str, Any]:
                 }
             }
         },
-        "responses": {
-            "200": {
-                "description": "Successful response",
-                "content": {
-                    "application/json": {
-                        "schema": {"$ref": f"#/components/schemas/{entity_name}"}
-                    }
+        "responses": update_responses
+    }
+    
+    # PATCH /api/{path_base}/{id} - Partial update
+    patch_responses = {
+        "200": {
+            "description": "Successful response",
+            "content": {
+                "application/json": {
+                    "schema": {"$ref": f"#/components/schemas/{entity_name}"}
                 }
             }
         }
     }
+    patch_responses.update(error_responses)
     
-    # PATCH /api/{path_base}/{id} - Partial update
     paths[detail_path]["patch"] = {
+        "operationId": f"{entity_camel}_patch",
         "tags": [entity_name],
         "summary": f"Partially update a {entity_name}",
         "parameters": [
@@ -298,41 +366,36 @@ def generate_crud_paths(entity_name: str, path_base: str) -> Dict[str, Any]:
                 }
             }
         },
-        "responses": {
-            "200": {
-                "description": "Successful response",
-                "content": {
-                    "application/json": {
-                        "schema": {"$ref": f"#/components/schemas/{entity_name}"}
+        "responses": patch_responses
+    }
+    
+    # DELETE /api/{path_base}/{id} - Delete
+    delete_responses = {
+        "200": {
+            "description": "Successful response",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "deleted": {"type": "boolean"}
+                        },
+                        "required": ["deleted"]
                     }
                 }
             }
         }
     }
+    delete_responses.update(error_responses)
     
-    # DELETE /api/{path_base}/{id} - Delete
     paths[detail_path]["delete"] = {
+        "operationId": f"{entity_camel}_delete",
         "tags": [entity_name],
         "summary": f"Delete a {entity_name}",
         "parameters": [
             {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}, "description": f"{entity_name} ID"}
         ],
-        "responses": {
-            "200": {
-                "description": "Successful response",
-                "content": {
-                    "application/json": {
-                        "schema": {
-                            "type": "object",
-                            "properties": {
-                                "deleted": {"type": "boolean"}
-                            },
-                            "required": ["deleted"]
-                        }
-                    }
-                }
-            }
-        }
+        "responses": delete_responses
     }
     
     return paths
@@ -476,7 +539,22 @@ class ApiDesignerAgent(BaseAgent):
                 )
             
             # Build OpenAPI spec
-            schemas = {}
+            schemas = {
+                "Error": {
+                    "type": "object",
+                    "properties": {
+                        "error": {
+                            "type": "string",
+                            "description": "Error message"
+                        },
+                        "code": {
+                            "type": "string",
+                            "description": "Error code"
+                        }
+                    },
+                    "required": ["error"]
+                }
+            }
             paths = {}
             tags = []
             
