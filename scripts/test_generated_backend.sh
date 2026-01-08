@@ -41,9 +41,9 @@ echo ""
 echo "=== Step 1: Creating clean output directory ==="
 OUT_DIR_ABS="${PROJECT_ROOT}/${OUT_DIR}"
 rm -rf "${OUT_DIR_ABS}"
-mkdir -p "${OUT_DIR_ABS}/workspace"
+mkdir -p "${OUT_DIR_ABS}/artifacts"
 mkdir -p "${OUT_DIR_ABS}/source"
-ARTIFACTS_DIR="${OUT_DIR_ABS}/workspace"
+ARTIFACTS_DIR="${OUT_DIR_ABS}/artifacts"
 SOURCE_DIR="${OUT_DIR_ABS}/source"
 echo "Created: ${OUT_DIR_ABS}"
 echo ""
@@ -441,6 +441,7 @@ cat >> "${VERIFICATION_LOG}" <<EOF
 EOF
 
 echo "Verification report written to: ${VERIFICATION_LOG}"
+echo "Absolute path: $(cd "$(dirname "${VERIFICATION_LOG}")" && pwd)/$(basename "${VERIFICATION_LOG}")"
 echo ""
 
 echo "=== Smoke Test Complete ==="

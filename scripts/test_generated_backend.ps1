@@ -9,7 +9,7 @@ $OUT_DIR = if ($env:OUT_DIR) { $env:OUT_DIR } else { "test_output/$JOB_ID/worksp
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PROJECT_ROOT = Split-Path -Parent $SCRIPT_DIR
 $OUT_DIR_ABS = Join-Path $PROJECT_ROOT $OUT_DIR
-$ARTIFACTS_DIR = Join-Path $OUT_DIR_ABS "workspace"
+$ARTIFACTS_DIR = Join-Path $OUT_DIR_ABS "artifacts"
 $SOURCE_DIR = Join-Path $OUT_DIR_ABS "source"
 $BACKEND_DIR = Join-Path $OUT_DIR_ABS "generated\backend"
 $VERIFICATION_LOG = Join-Path $ARTIFACTS_DIR "verification.md"
@@ -478,6 +478,7 @@ print(json.dumps(payload))
     
     $content | Out-File -FilePath $VERIFICATION_LOG -Encoding utf8
     Write-Host "Verification report written to: $VERIFICATION_LOG"
+    Write-Host "Absolute path: $((Resolve-Path $VERIFICATION_LOG -ErrorAction SilentlyContinue).Path)"
     Write-Host ""
     
     Write-Host "=== Smoke Test Complete ==="
