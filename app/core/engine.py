@@ -9,9 +9,10 @@ from app.agents.registry import AgentRegistry
 log = logging.getLogger(__name__)
 
 class WorkflowEngine:
-    def __init__(self, db: Session, workspace: WorkspaceManager):
+    def __init__(self, db: Session, workspace: WorkspaceManager, job_id: str):
         self.db = db
         self.ws = workspace
+        self.job_id = job_id
         self.registry = AgentRegistry.default()
 
     def _set_stage(self, job: MigrationJob, stage: JobStage) -> None:
@@ -40,7 +41,7 @@ class WorkflowEngine:
 
         for stage in stages:
             self._set_stage(job, stage)
-            log.info("Running stage %s for job %s", stage, job.id)
+            log.info("Running stage", extra={"job_id": self.job_id, "stage": str(stage)})
 
             agent = self.registry.get(stage)
             result = agent.run(job=job, ws=self.ws)
@@ -48,6 +49,7 @@ class WorkflowEngine:
             self._merge_artifacts(job, result.artifacts_index)
 
             if not result.ok:
+                log.error("Stage failed", extra={"job_id": self.job_id, "stage": str(stage)})
                 job.status = "FAILED"
                 job.error_message = result.message
                 job.stage = JobStage.FAILED

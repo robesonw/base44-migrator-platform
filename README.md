@@ -93,6 +93,65 @@ Workspace artifacts live under `workspaces/<job_id>/workspace/` and drive downst
 
 ---
 
+## Troubleshooting
+
+### Docker Issues
+
+**Services fail to start:**
+- Ensure Docker and Docker Compose are running
+- Check port conflicts: `5432` (PostgreSQL), `6379` (Redis), `8080` (API)
+- Verify `.env` file exists with required variables (`DATABASE_URL`, `REDIS_URL`)
+- Try rebuilding: `docker compose down -v && docker compose up --build`
+
+**Database connection errors:**
+- The API automatically waits for PostgreSQL to be ready (up to 30 seconds)
+- Check PostgreSQL logs: `docker compose logs postgres`
+- Verify database credentials in `.env` match `docker-compose.yml`
+- If issues persist, try: `docker compose restart postgres`
+
+**Volume/permission issues:**
+- Ensure `workspaces/` directory exists and is writable
+- On Linux/Mac, check file permissions: `chmod -R 755 workspaces/`
+- On Windows, ensure Docker Desktop has access to the project directory
+
+### Database Migrations
+
+**Migration fails on startup:**
+- The API runs `alembic upgrade head` automatically on startup
+- If migration fails, the API will fail fast with clear error logs
+- Check API logs: `docker compose logs api`
+- Verify database is accessible: `docker compose exec postgres psql -U app -d app -c "SELECT 1"`
+- To run migrations manually: `docker compose exec api alembic upgrade head`
+
+**Reset database:**
+- WARNING: This will delete all data
+- `docker compose down -v` (removes volumes)
+- Restart services: `docker compose up`
+
+**Check migration status:**
+- `docker compose exec api alembic current`
+- `docker compose exec api alembic history`
+
+### Logs
+
+**View logs:**
+- All services: `docker compose logs`
+- Specific service: `docker compose logs api` or `docker compose logs worker`
+- Follow logs: `docker compose logs -f worker`
+- Last 100 lines: `docker compose logs --tail=100 api`
+
+**Worker logs format:**
+- All worker logs include `job_id` and `stage` fields
+- Format: `[job_id=<id> stage=<stage>] - <message>`
+- Example: `2024-01-01 12:00:00 INFO app.tasks.jobs [job_id=abc-123 stage=CLONE_SOURCE] - Running stage`
+
+**Logs not appearing:**
+- Ensure services are running: `docker compose ps`
+- Check log level in environment variables
+- Verify volumes are mounted correctly
+
+---
+
 ## Repo layout
 ```
 app/
