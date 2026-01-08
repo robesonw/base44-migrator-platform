@@ -6,7 +6,13 @@ from app.db.session import Base
 from app.db import models  # noqa
 
 config = context.config
-fileConfig(config.config_file_name) if config.config_file_name else None
+# Attempt to configure logging from alembic.ini, but don't fail if it's not configured
+if config.config_file_name:
+    try:
+        fileConfig(config.config_file_name)
+    except (KeyError, ValueError):
+        # Logging config not present in alembic.ini, that's ok - app logging is configured separately
+        pass
 target_metadata = Base.metadata
 
 def run_migrations_offline():

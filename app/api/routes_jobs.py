@@ -1,8 +1,11 @@
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from pathlib import Path
 from app.db.session import get_db
 from app.db.models import MigrationJob
-from app.schemas.jobs import JobCreateRequest, JobResponse
+from app.core.config import settings
+from app.schemas.jobs import JobCreateRequest, JobResponse, ArtifactsResponse, ArtifactInfo
 from app.tasks.jobs import run_job_workflow
 
 router = APIRouter(prefix="/jobs")
@@ -53,3 +56,34 @@ def get_job(job_id: str, db: Session = Depends(get_db)):
         error_message=job.error_message,
         artifacts=job.artifacts or {},
     )
+
+
+@router.get("/{job_id}/artifacts", response_model=ArtifactsResponse)
+def get_job_artifacts(job_id: str, db: Session = Depends(get_db)):
+    job = db.get(MigrationJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    workspace_dir = Path(settings.workspaces_dir) / job_id / "workspace"
+    
+    if not workspace_dir.exists():
+        return ArtifactsResponse(job_id=job_id, artifacts=[])
+    
+    artifacts = []
+    
+    for file_path in workspace_dir.rglob("*"):
+        if file_path.is_file():
+            relative_path = file_path.relative_to(workspace_dir)
+            stat = file_path.stat()
+            artifacts.append(
+                ArtifactInfo(
+                    path=str(relative_path),
+                    size=stat.st_size,
+                    last_modified=datetime.fromtimestamp(stat.st_mtime),
+                )
+            )
+    
+    # Sort by path for consistent output
+    artifacts.sort(key=lambda x: x.path)
+    
+    return ArtifactsResponse(job_id=job_id, artifacts=artifacts)

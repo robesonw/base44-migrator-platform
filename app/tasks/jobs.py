@@ -16,7 +16,7 @@ def run_job_workflow(job_id: str) -> None:
     try:
         job = db.get(MigrationJob, job_id)
         if not job:
-            log.error("Job not found: %s", job_id)
+            log.error("Job not found", extra={"job_id": job_id, "stage": "-"})
             return
 
         job.status = "RUNNING"
@@ -25,7 +25,9 @@ def run_job_workflow(job_id: str) -> None:
         ws = WorkspaceManager(job_id=job.id)
         ws.ensure()
 
-        engine = WorkflowEngine(db=db, workspace=ws)
+        log.info("Starting workflow", extra={"job_id": job_id, "stage": str(job.stage)})
+
+        engine = WorkflowEngine(db=db, workspace=ws, job_id=job_id)
         engine.run(job)
 
         job = db.get(MigrationJob, job_id)
@@ -33,10 +35,12 @@ def run_job_workflow(job_id: str) -> None:
             job.status = "DONE"
             job.stage = JobStage.DONE
             db.commit()
+            log.info("Workflow completed successfully", extra={"job_id": job_id, "stage": "DONE"})
 
     except Exception as e:
-        log.exception("Workflow failed for job %s", job_id)
         job = db.get(MigrationJob, job_id)
+        stage = str(job.stage) if job else "-"
+        log.exception("Workflow failed", extra={"job_id": job_id, "stage": stage})
         if job:
             job.status = "FAILED"
             job.stage = JobStage.FAILED

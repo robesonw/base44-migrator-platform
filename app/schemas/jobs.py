@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
-from typing import Literal, Optional, Dict, Any
+from typing import Literal, Optional, Dict, Any, List
+from datetime import datetime
 from app.core.workflow import JobStage
 
 class JobCreateRequest(BaseModel):
@@ -20,3 +21,14 @@ class JobResponse(BaseModel):
     status: str
     error_message: Optional[str] = None
     artifacts: Dict[str, Any] = {}
+
+
+class ArtifactInfo(BaseModel):
+    path: str
+    size: int
+    last_modified: datetime
+
+
+class ArtifactsResponse(BaseModel):
+    job_id: str
+    artifacts: List[ArtifactInfo]
