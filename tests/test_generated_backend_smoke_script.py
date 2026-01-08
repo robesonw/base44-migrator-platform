@@ -51,3 +51,4 @@ def test_scripts_reference_correct_paths():
     assert "from app.agents.impl_build import BackendBuilderAgent" in ps1_content or "app.agents.impl_build" in ps1_content
     assert "from app.generators.backend_gen.smoke_payload import build_minimal_payload" in ps1_content or "app.generators.backend_gen.smoke_payload" in ps1_content
 
+

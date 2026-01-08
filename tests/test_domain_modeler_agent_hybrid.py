@@ -272,3 +272,4 @@ def test_postgres_user_supplied_timestamp():
         updated_at_line = updated_at_lines[0]
         assert "DEFAULT now()" in updated_at_line, "updated_at should always have DEFAULT now() even if created_at doesn't"
 
+

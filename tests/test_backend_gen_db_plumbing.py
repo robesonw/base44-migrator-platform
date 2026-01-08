@@ -116,3 +116,4 @@ def test_backend_gen_db_plumbing():
         assert "asyncpg" in requirements_content
         assert "motor" in requirements_content
 
+
