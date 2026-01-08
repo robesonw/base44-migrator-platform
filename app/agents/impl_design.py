@@ -689,25 +689,33 @@ class DomainModelerAgent(BaseAgent):
         
         if strategy == "docToMongo":
             # docToMongo strategy: any complex object/map/array-of-object → mongo
+            # Treat as complex → Mongo if any field:
+            # - field.type == "object" AND (raw.additionalProperties is truthy OR raw.properties exists)
+            # - OR field.type == "array" AND (raw.items.type == "object" OR raw.items.properties exists)
             for field in fields:
                 field_type = field.get("type", "").lower()
                 raw = field.get("raw", {})
                 
                 if field_type == "object":
-                    if "properties" in raw and raw["properties"]:
-                        # Has nested properties - complex
-                        return "mongo", f"field '{field['name']}' has nested properties"
-                    if "additionalProperties" in raw and raw.get("additionalProperties") is True:
-                        # Open schema/map - complex
-                        return "mongo", f"field '{field['name']}' has additionalProperties map"
+                    # Check if additionalProperties is truthy (can be True, dict, or any truthy value)
+                    has_additional_properties = "additionalProperties" in raw and raw.get("additionalProperties")
+                    # Check if properties exists (even if empty, we check existence)
+                    has_properties = "properties" in raw
+                    
+                    if has_additional_properties or has_properties:
+                        if has_additional_properties:
+                            return "mongo", f"field '{field['name']}' has additionalProperties"
+                        elif has_properties:
+                            return "mongo", f"field '{field['name']}' has properties"
                 elif field_type == "array":
                     items = raw.get("items", {})
-                    if isinstance(items, dict) and items.get("type") == "object":
-                        # Array of objects - complex
-                        return "mongo", f"field '{field['name']}' is array of objects"
-                    if isinstance(items, dict) and "properties" in items:
-                        # Array of complex objects
-                        return "mongo", f"field '{field['name']}' is array of objects with nested properties"
+                    if isinstance(items, dict):
+                        # Check if items.type == "object" OR items.properties exists
+                        if items.get("type") == "object" or "properties" in items:
+                            if items.get("type") == "object":
+                                return "mongo", f"field '{field['name']}' is array of objects"
+                            elif "properties" in items:
+                                return "mongo", f"field '{field['name']}' is array of objects with properties"
         
         elif strategy == "postgresJsonbFirst":
             # postgresJsonbFirst strategy: keep postgres unless deep nesting detected
