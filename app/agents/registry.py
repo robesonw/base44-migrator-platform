@@ -6,6 +6,7 @@ from app.agents.impl_clone import CloneSourceAgent, CloneTargetAgent
 from app.agents.impl_intake import RepoIntakeAgent
 from app.agents.impl_design import DomainModelerAgent, ApiDesignerAgent
 from app.agents.impl_build import BackendBuilderAgent, AsyncArchitectAgent, FrontendWiringAgent, VerificationAgent
+from app.agents.impl_client_adapter import Base44ClientAdapterAgent
 from app.agents.git_commit_agent import GitCommitAgent
 
 @dataclass
@@ -24,6 +25,7 @@ class AgentRegistry:
             JobStage.DESIGN_DB_SCHEMA: DomainModelerAgent(),
             JobStage.DESIGN_API: ApiDesignerAgent(),
             JobStage.GENERATE_BACKEND: BackendBuilderAgent(),
+            JobStage.ADAPT_CLIENT: Base44ClientAdapterAgent(),
             JobStage.ADD_ASYNC: AsyncArchitectAgent(),
             JobStage.WIRE_FRONTEND: FrontendWiringAgent(),
             JobStage.VERIFY: VerificationAgent(),
