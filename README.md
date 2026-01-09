@@ -29,6 +29,30 @@ flowchart LR
 
 ---
 
+## Environment Variables
+
+### LLM Provider Configuration
+
+The Base44 compatibility client supports multiple LLM providers via environment variables:
+
+- **`VITE_LLM_PROVIDER`** (default: `openrouter`): LLM provider to use. Options: `openrouter`, `openai`, `anthropic`
+- **`VITE_OPENROUTER_API_KEY`**: API key for OpenRouter (required if using OpenRouter)
+- **`VITE_OPENROUTER_MODEL`** (default: `openai/gpt-4o-mini`): Model to use with OpenRouter
+- **`VITE_OPENAI_API_KEY`**: API key for OpenAI (optional, not yet implemented)
+- **`VITE_ANTHROPIC_API_KEY`**: API key for Anthropic (optional, not yet implemented)
+- **`VITE_API_BASE_URL`** (default: `http://localhost:8081`): Base URL for the generated backend API
+
+**Note**: Currently only OpenRouter is fully implemented. OpenAI and Anthropic providers will throw errors indicating they're not yet implemented.
+
+### Example `.env` file:
+
+```env
+VITE_API_BASE_URL=http://localhost:8081
+VITE_LLM_PROVIDER=openrouter
+VITE_OPENROUTER_API_KEY=sk-or-v1-...
+VITE_OPENROUTER_MODEL=openai/gpt-4o-mini
+```
+
 ## Development Workflow
 
 This repository uses a **dev/main branch workflow**:
