@@ -33,6 +33,7 @@ class WorkflowEngine:
             JobStage.DESIGN_DB_SCHEMA,
             JobStage.DESIGN_API,
             JobStage.GENERATE_BACKEND,
+            JobStage.ADAPT_CLIENT,
             JobStage.ADD_ASYNC,
             JobStage.WIRE_FRONTEND,
             JobStage.VERIFY,
