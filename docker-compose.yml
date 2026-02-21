@@ -1,44 +1,42 @@
+version: '3.8'
+
 services:
-  postgres:
-    image: postgres:16
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - '3000:3000'
+    depends_on:
+      - backend
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
+      - API_URL=http://backend:4000
 
-  redis:
-    image: redis:7
-    ports:
-      - "6379:6379"
-
-  api:
+  backend:
     build:
-      context: .
-      dockerfile: docker/Dockerfile
-    env_file: .env
-    depends_on:
-      - postgres
-      - redis
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
-      - "8080:8080"
-    volumes:
-      - ./workspaces:/data/workspaces
+      - '4000:4000'
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: app_db
+      AI_PROVIDER: openai
+      AI_MODEL: gpt-4o
+      AI_API_KEY: sk-...
 
-  worker:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    env_file: .env
-    depends_on:
-      - postgres
-      - redis
-    command: celery -A app.tasks.celery_app worker -l INFO
+  db:
+    image: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: app_db
     volumes:
-      - ./workspaces:/data/workspaces
+      - postgres_data:/var/lib/postgresql/data
 
 volumes:
-  pgdata:
+  postgres_data:
